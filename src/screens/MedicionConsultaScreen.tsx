@@ -1,10 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import DateTimePicker, {
   DateTimePickerAndroid,
 } from '@react-native-community/datetimepicker';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
 import {
+  Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -20,11 +24,14 @@ import {
   useMedicionStore,
 } from '../stores/medicionStores';
 
-const formatDate = (date: string) =>
-  new Intl.DateTimeFormat('es-AR', {
+const formatDate = (date: string) => {
+  const parsedDate = new Date(date);
+  if (!Number.isFinite(parsedDate.getTime())) return 'Fecha no disponible';
+  return new Intl.DateTimeFormat('es-AR', {
     dateStyle: 'medium',
     timeStyle: 'short',
-  }).format(new Date(date));
+  }).format(parsedDate);
+};
 
 const toLocalDate = (date: string) => {
   const value = new Date(date);
@@ -64,6 +71,10 @@ export default function MedicionConsultaScreen() {
   const [editRealizada, setEditRealizada] = useState(true);
   const [editError, setEditError] = useState('');
   const [editSaved, setEditSaved] = useState(false);
+  const [editFotoUri, setEditFotoUri] = useState<string | null>(null);
+  const [cameraVisible, setCameraVisible] = useState(false);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView>(null);
 
   const medicionSel = mediciones.find(
     (medicion) => medicion.id === selectedMediciontId,
@@ -123,12 +134,45 @@ export default function MedicionConsultaScreen() {
     setEditValue(medicion.realizada !== false ? String(medicion.value) : '');
     setEditRealizada(medicion.realizada !== false);
     setEditObservacion(medicion.observacion);
+    setEditFotoUri(medicion.fotoUri ?? null);
     setEditError('');
     setEditSaved(false);
+  };
 
+  const seleccionarFoto = async () => {
+    const permiso = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permiso.granted) {
+      Alert.alert('Permiso requerido', 'Habilita el acceso a la galería para adjuntar una foto.');
+      return;
+    }
 
+    const resultado = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.8,
+    });
 
+    if (!resultado.canceled) {
+      setEditFotoUri(resultado.assets[0].uri);
+    }
+  };
 
+  const abrirCamara = async () => {
+    const permiso = cameraPermission?.granted
+      ? cameraPermission
+      : await requestCameraPermission();
+    if (!permiso.granted) {
+      Alert.alert('Permiso requerido', 'Habilita el acceso a la cámara para tomar una foto.');
+      return;
+    }
+    setCameraVisible(true);
+  };
+
+  const tomarFoto = async () => {
+    const foto = await cameraRef.current?.takePictureAsync({ quality: 0.8 });
+    if (foto?.uri) setEditFotoUri(foto.uri);
+    setCameraVisible(false);
   };
 
   const saveChanges = () => {
@@ -156,8 +200,8 @@ export default function MedicionConsultaScreen() {
       value: editRealizada ? numericValue : 0,
       realizada: editRealizada,
       observacion: editObservation.trim(),
-      fotoUri: medicionSel.fotoUri,
-      fecha: ''
+      fotoUri: editFotoUri ?? undefined,
+      fecha: medicionSel.fecha
     });
     setEditError('');
     setEditSaved(true);
@@ -222,6 +266,7 @@ export default function MedicionConsultaScreen() {
             </Text>
 
             {isEdiccion ? (
+              <> 
               <View style={styles.editForm}>
                 <Text style={styles.label}>Cliente</Text>
                 <TextInput
@@ -328,6 +373,36 @@ export default function MedicionConsultaScreen() {
                   placeholderTextColor="#8a918d" style={styles.observacionInput} textAlignVertical="top"
                   value={editObservation}
                 />
+                <Text style={[styles.label, styles.fieldSpacing]}>Foto del medidor</Text>
+                <View style={styles.photoActions}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={seleccionarFoto}
+                    style={({ pressed }) => [styles.photoButton, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.photoButtonText}>Elegir de galería</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={abrirCamara}
+                    style={({ pressed }) => [styles.photoButton, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.photoButtonText}>Tomar foto</Text>
+                  </Pressable>
+                </View>
+                {editFotoUri ? (
+                  <View style={styles.photoPreview}>
+                    <Image source={{ uri: editFotoUri }} style={styles.photoImage} resizeMode="cover" />
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Eliminar foto"
+                      onPress={() => setEditFotoUri(null)}
+                      style={styles.removePhotoButton}
+                    >
+                      <Text style={styles.removePhotoText}>×</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
                 <Text style={styles.originalDate}>
                   Fecha de toma: {formatDate(medicionSel.fecha)}
                 </Text>
@@ -348,6 +423,30 @@ export default function MedicionConsultaScreen() {
                   </Pressable>
                 </View>
               </View>
+              <Modal
+                animationType="slide"
+                onRequestClose={() => setCameraVisible(false)}
+                transparent={false}
+                visible={cameraVisible}
+              >
+                <View style={styles.cameraContainer}>
+                  <CameraView ref={cameraRef} style={styles.cameraPreview} facing="back" />
+                  <View style={styles.cameraControls}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => setCameraVisible(false)}
+                      style={styles.cameraCancelButton}
+                    >
+                      <Text style={styles.cameraCancelText}>Cancelar</Text>
+                    </Pressable>
+                    <Pressable accessibilityRole="button" onPress={tomarFoto} style={styles.captureButton}>
+                      <View style={styles.captureButtonInner} />
+                    </Pressable>
+                    <View style={styles.cameraControlSpacer} />
+                  </View>
+                </View>
+              </Modal>
+              </>
             ) : (
               <View style={styles.detailSection}>
                 {editSaved ? (
@@ -384,7 +483,9 @@ export default function MedicionConsultaScreen() {
                 <DetailRow label="CLIENTE" value={cliente?.nombreCompleto ?? 'Cliente no disponible'} />
                 <DetailRow label="DOMICILIO" value={cliente?.Direccion ?? '—'} />
                 <DetailRow label="DNI" value={cliente?.dni ?? '—'} />
-                <DetailRow label="FECHA DE TOMA" value={formatDate(medicionSel.fecha)} />
+                {medicionSel.realizada !== false ? (
+                  <DetailRow label="FECHA DE TOMA" value={formatDate(medicionSel.fecha)} />
+                ) : null}
 
                 <DetailRow
                   label="OBSERVACIÓN"
@@ -962,6 +1063,94 @@ const styles = StyleSheet.create({
   serviceTextSelected: {
     color: '#155c45',
     fontWeight: '800',
+  },
+  photoActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  photoButton: {
+    minHeight: 44,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#cbd5cd',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+  },
+  photoButtonText: {
+    color: '#155c45',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  photoPreview: {
+    height: 220,
+    marginTop: 12,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#dfe4dd',
+  },
+  photoImage: {
+    width: '100%',
+    height: '100%',
+  },
+  removePhotoButton: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 17,
+    backgroundColor: 'rgba(23, 57, 47, 0.88)',
+  },
+  removePhotoText: {
+    color: '#fff',
+    fontSize: 22,
+    lineHeight: 24,
+  },
+  cameraContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  cameraPreview: {
+    flex: 1,
+  },
+  cameraControls: {
+    position: 'absolute',
+    right: 0,
+    bottom: 34,
+    left: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+  },
+  cameraCancelButton: {
+    width: 70,
+  },
+  cameraCancelText: {
+    color: '#fff',
+    fontSize: 15,
+  },
+  cameraControlSpacer: {
+    width: 70,
+  },
+  captureButton: {
+    width: 72,
+    height: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#fff',
+    borderRadius: 36,
+  },
+  captureButtonInner: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#fff',
   },
   observacionInput: {
     minHeight: 84,

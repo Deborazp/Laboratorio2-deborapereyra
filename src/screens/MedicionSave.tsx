@@ -20,11 +20,14 @@ import {
   useMedicionStore,
 } from '../stores/medicionStores';
 
-const formatDate = (date: string) =>
-  new Intl.DateTimeFormat('es-AR', {
+const formatDate = (date: string) => {
+  const parsedDate = new Date(date);
+  if (!Number.isFinite(parsedDate.getTime())) return 'Fecha no disponible';
+  return new Intl.DateTimeFormat('es-AR', {
     dateStyle: 'medium',
     timeStyle: 'short',
-  }).format(new Date(date));
+  }).format(parsedDate);
+};
 
 const normalizeSearch = (value: string) =>
   value
