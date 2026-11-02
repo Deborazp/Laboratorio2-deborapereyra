@@ -21,7 +21,23 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-status-bar",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "COSPRAL necesita usar la cámara para fotografiar el medidor.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "COSPRAL necesita acceder a la galería para adjuntar una foto del medidor.",
+          "cameraPermission": "COSPRAL necesita usar la cámara para fotografiar el medidor.",
+          "microphonePermission": false
+        }
+      ]
     ]
   }
 }

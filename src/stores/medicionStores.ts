@@ -7,7 +7,9 @@ export type Medicion = {
   clientId: string;
   servicio: TipoServicio;
   value: number;
+  realizada: boolean;
   observacion: string;
+  fotoUri?: string;
   fecha: string;
 };
 

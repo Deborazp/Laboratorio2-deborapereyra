@@ -3,6 +3,7 @@ import DateTimePicker, {
   DateTimePickerAndroid,
 } from '@react-native-community/datetimepicker';
 import {
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -60,6 +61,7 @@ export default function MedicionConsultaScreen() {
 
   const [editValue, setEditValue] = useState('');
   const [editObservation, setEditObservacion] = useState('');
+  const [editRealizada, setEditRealizada] = useState(true);
   const [editError, setEditError] = useState('');
   const [editSaved, setEditSaved] = useState(false);
 
@@ -118,7 +120,8 @@ export default function MedicionConsultaScreen() {
     setEditClientId(medicion.clientId);
     setEditClientQuery(cliente?.nombreCompleto ?? '');
     setEditServicio(medicion.servicio);
-    setEditValue(String(medicion.value));
+    setEditValue(medicion.realizada !== false ? String(medicion.value) : '');
+    setEditRealizada(medicion.realizada !== false);
     setEditObservacion(medicion.observacion);
     setEditError('');
     setEditSaved(false);
@@ -138,16 +141,22 @@ export default function MedicionConsultaScreen() {
     }
 
 
-    if (!editValue.trim() || !Number.isFinite(numericValue) || numericValue < 0) {
+    if (editRealizada && (!editValue.trim() || !Number.isFinite(numericValue) || numericValue < 0)) {
       setEditError('Ingresa una lectura numérica válida, igual o mayor que cero.');
+      return;
+    }
+    if (!editRealizada && !editObservation.trim()) {
+      setEditError('Agrega una observación indicando por qué no se pudo realizar la medición.');
       return;
     }
 
     actualizarMedicion(medicionSel.id, {
       clientId: editClientId,
       servicio: editService,
-      value: numericValue,
+      value: editRealizada ? numericValue : 0,
+      realizada: editRealizada,
       observacion: editObservation.trim(),
+      fotoUri: medicionSel.fotoUri,
       fecha: ''
     });
     setEditError('');
@@ -287,15 +296,33 @@ export default function MedicionConsultaScreen() {
                   ))}
                 </View>
 
-                <Text style={[styles.label, styles.fieldSpacing]}>Lectura</Text>
-                <TextInput                  accessibilityLabel="Modificar lectura"
+                <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: !editRealizada }}
+                  onPress={() => setEditRealizada((actual) => !actual)}
+                  style={styles.editStatusOption}
+                >
+                  <View style={[styles.editCheckbox, !editRealizada && styles.editCheckboxSelected]}>
+                    {!editRealizada ? <Text style={styles.editCheckboxMark}>✓</Text> : null}
+                  </View>
+                  <Text style={styles.editStatusText}>No se pudo realizar la medición</Text>
+                </Pressable>
+
+                {editRealizada ? (
+                  <>
+                    <Text style={[styles.label, styles.fieldSpacing]}>Lectura</Text>
+                    <TextInput                  accessibilityLabel="Modificar lectura"
                   keyboardType="decimal-pad"                  onChangeText={(text) => setEditValue(text.replace(/[^\d.,]/g, ''))}
                   placeholder="0"                  placeholderTextColor="#9aa19a"
                   style={styles.input}
                   value={editValue}
                 />
+                  </>
+                ) : null}
 
-                <Text style={[styles.label, styles.fieldSpacing]}>Observación</Text>
+                <Text style={[styles.label, styles.fieldSpacing]}>
+                  Observación{!editRealizada ? ' *' : ''}
+                </Text>
                 <TextInput accessibilityLabel="Modificar observación" multiline
                   onChangeText={setEditObservacion} placeholder="Observación opcional"
                   placeholderTextColor="#8a918d" style={styles.observacionInput} textAlignVertical="top"
@@ -337,10 +364,21 @@ export default function MedicionConsultaScreen() {
                       {medicionSel.servicio.toUpperCase()}
                     </Text>
                   </View>
-                  <Text style={styles.detailValue}>
-                    {medicionSel.value}{' '}
-                    {medicionSel.servicio === 'Agua' ? 'm³' : 'kWh'}
-                  </Text>
+                  <View style={styles.detailStatusBlock}>
+                    <Text style={[
+                      styles.detailStatus,
+                      medicionSel.realizada === false
+                        ? styles.detailStatusNotDone
+                        : styles.detailStatusDone,
+                    ]}>
+                      {medicionSel.realizada === false ? 'NO REALIZADA' : 'REALIZADA'}
+                    </Text>
+                    <Text style={styles.detailValue}>
+                      {medicionSel.realizada === false
+                        ? 'Sin lectura'
+                        : `${medicionSel.value} ${medicionSel.servicio === 'Agua' ? 'm³' : 'kWh'}`}
+                    </Text>
+                  </View>
                 </View>
                 <View style={styles.detailDivider} />
                 <DetailRow label="CLIENTE" value={cliente?.nombreCompleto ?? 'Cliente no disponible'} />
@@ -352,6 +390,19 @@ export default function MedicionConsultaScreen() {
                   label="OBSERVACIÓN"
                   value={medicionSel.observacion || 'Sin observaciones'}
                 />
+                <View style={styles.detailPhotoSection}>
+                  <Text style={styles.detailLabel}>FOTO DEL MEDIDOR</Text>
+                  {medicionSel.fotoUri ? (
+                    <Image
+                      accessibilityLabel="Foto del medidor registrada"
+                      resizeMode="cover"
+                      source={{ uri: medicionSel.fotoUri }}
+                      style={styles.detailPhoto}
+                    />
+                  ) : (
+                    <Text style={styles.detailPhotoEmpty}>Sin foto adjunta</Text>
+                  )}
+                </View>
                 <Pressable
                   accessibilityRole="button"
                   onPress={() => beginEdit(medicionSel)}
@@ -448,8 +499,7 @@ export default function MedicionConsultaScreen() {
                   : 'No hay mediciones que coincidan con esos filtros.'}
               </Text>
             ) : (filteredMediciones.map((medicion) => {
-              const medicionCliente = clientes.find(
-                (item) => item.id === medicion.clientId,
+              const medicionCliente = clientes.find((item) => item.id === medicion.clientId,
               );
               return (
                 <View key={medicion.id} style={styles.medicionRow}>
@@ -457,6 +507,13 @@ export default function MedicionConsultaScreen() {
                     <View style={styles.serviceBadge}>
                       <Text style={styles.serviceBadgeText}>
                         {medicion.servicio.toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={[styles.statusBadge, medicion.realizada === false                        ? styles.statusBadgeNotDone
+                        : styles.statusBadgeDone,
+                    ]}>
+                      <Text style={styles.statusBadgeText}>
+                        {medicion.realizada === false ? 'NO REALIZADA' : 'REALIZADA'}
                       </Text>
                     </View>
 
@@ -471,12 +528,11 @@ export default function MedicionConsultaScreen() {
                   </Text>
                   <View style={styles.rowFooter}>
                     <Text style={styles.rowValue}>
-                      {medicion.value}{' '}
-                      {medicion.servicio === 'Agua' ? 'm³' : 'kWh'}
+                      {medicion.realizada === false
+                        ? 'Sin lectura': `${medicion.value} ${medicion.servicio === 'Agua' ? 'm³' : 'kWh'}`}
                     </Text>
                     <View style={styles.rowActions}>
-                      <Pressable
-                        accessibilityRole="button"
+                      <Pressable accessibilityRole="button"
                         onPress={() => {
                           setSelectedMediccionId(medicion.id);
                           setIsEdiccion(false);
@@ -709,6 +765,60 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.8,
   },
+  statusBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 5,
+  },
+  statusBadgeDone: { backgroundColor: '#dfeee2' },
+  statusBadgeNotDone: { backgroundColor: '#f5dfdc' },
+  statusBadgeText: {
+    color: '#244238',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+  detailStatusBlock: { alignItems: 'flex-end' },
+  detailStatus: {
+    marginBottom: 4,
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  detailStatusDone: { color: '#548d60' },
+  detailStatusNotDone: { color: '#b43f32' },
+  editStatusOption: {
+    minHeight: 48,
+    marginTop: 18,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#d8ddd5',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+  },
+  editCheckbox: {
+    width: 22,
+    height: 22,
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#8d978f',
+    borderRadius: 5,
+  },
+  editCheckboxSelected: {
+    borderColor: '#155c45',
+    backgroundColor: '#155c45',
+  },
+  editCheckboxMark: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  editStatusText: {
+    flex: 1,
+    color: '#244238',
+    fontSize: 13,
+    fontWeight: '600',
+  },
   rowDate: {
     flex: 1,
     color: '#7b847d',
@@ -795,6 +905,21 @@ const styles = StyleSheet.create({
     color: '#244238',
     fontSize: 13,
     lineHeight: 19,
+  },
+  detailPhotoSection: {
+    marginBottom: 16,
+  },
+  detailPhoto: {
+    width: '100%',
+    height: 220,
+    marginTop: 7,
+    borderRadius: 8,
+    backgroundColor: '#e5e9e2',
+  },
+  detailPhotoEmpty: {
+    marginTop: 5,
+    color: '#89918a',
+    fontSize: 13,
   },
   detailEditButton: {
     marginTop: 7,

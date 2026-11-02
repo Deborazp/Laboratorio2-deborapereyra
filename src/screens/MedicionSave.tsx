@@ -1,6 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
 import {
+  Alert,
+  Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -35,6 +40,11 @@ export default function MedicionSave() {
   const [servicio, setServicio] = useState<TipoServicio | null>(null);
   const [value, setValue] = useState('');
   const [observation, setObservacion] = useState('');
+  const [realizada, setRealizada] = useState(true);
+  const [fotoUri, setFotoUri] = useState<string | null>(null);
+  const [cameraVisible, setCameraVisible] = useState(false);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView>(null);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
 
@@ -72,6 +82,46 @@ export default function MedicionSave() {
     setSaved(false);
   };
 
+  const seleccionarFoto = async () => {
+    const permiso = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permiso.granted) {
+      Alert.alert('Permiso requerido', 'Habilita el acceso a la galería para adjuntar una foto.');
+      return;
+    }
+
+    const resultado = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.8,
+    });
+
+    if (!resultado.canceled) {
+      setFotoUri(resultado.assets[0].uri);
+      setSaved(false);
+    }
+  };
+
+  const abrirCamara = async () => {
+    const permiso = cameraPermission?.granted
+      ? cameraPermission
+      : await requestCameraPermission();
+    if (!permiso.granted) {
+      Alert.alert('Permiso requerido', 'Habilita el acceso a la cámara para tomar una foto.');
+      return;
+    }
+    setCameraVisible(true);
+  };
+
+  const tomarFoto = async () => {
+    const foto = await cameraRef.current?.takePictureAsync({ quality: 0.8 });
+    if (foto?.uri) {
+      setFotoUri(foto.uri);
+      setSaved(false);
+    }
+    setCameraVisible(false);
+  };
+
   const guardarMedicion = () => {
     const numericValue = Number(value.replace(',', '.'));
     if (!selectedClientId) {
@@ -82,16 +132,22 @@ export default function MedicionSave() {
       setError('Selecciona el tipo de servicio.');
       return;
     }
-    if (!value.trim() || !Number.isFinite(numericValue) || numericValue < 0) {
+    if (realizada && (!value.trim() || !Number.isFinite(numericValue) || numericValue < 0)) {
       setError('Ingresa una lectura numérica válida, igual o mayor que cero.');
+      return;
+    }
+    if (!realizada && !observation.trim()) {
+      setError('Agrega una observación indicando por qué no se pudo realizar la medición.');
       return;
     }
 
     addMedicion({
       clientId: selectedClientId,
       servicio: servicio,
-      value: numericValue,
+      value: realizada ? numericValue : 0,
+      realizada,
       observacion: observation.trim(),
+      fotoUri: fotoUri ?? undefined,
       fecha: ''
     });
 
@@ -100,9 +156,11 @@ export default function MedicionSave() {
     setSelectedClientId(null);
     setServicio(null);
     setValue('');
+    setRealizada(true);
 
 
     setObservacion('');
+    setFotoUri(null);
     setError('');
     setSaved(true);
   };
@@ -176,6 +234,7 @@ export default function MedicionSave() {
             const selected = servicio === item;
             return (
               <Pressable
+                accessibilityLabel={`Servicio ${item}`}
                 accessibilityRole="radio"
                 accessibilityState={{ selected }}
                 key={item}
@@ -199,8 +258,27 @@ export default function MedicionSave() {
           })}
         </View>
 
-        <Text style={[styles.label, styles.previousLabel]}>Lectura anterior</Text>
-        <View style={styles.previousReading}>
+        <Text style={[styles.label, styles.statusLabel]}>Estado de la medición</Text>
+        <Pressable
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: !realizada }}
+          onPress={() => {
+            setRealizada((actual) => !actual);
+            setError('');
+            setSaved(false);
+          }}
+          style={styles.statusOption}
+        >
+          <View style={[styles.checkbox, !realizada && styles.checkboxSelected]}>
+            {!realizada ? <Text style={styles.checkboxMark}>✓</Text> : null}
+          </View>
+          <Text style={styles.statusText}>No se pudo realizar la medición</Text>
+        </Pressable>
+
+        {realizada ? (
+          <>
+            <Text style={[styles.label, styles.previousLabel]}>Lectura anterior</Text>
+            <View style={styles.previousReading}>
           <View>
             <Text style={styles.previousCaption}>
               {servicio ? `ÚLTIMA LECTURA DE ${servicio.toUpperCase()}` : 'SELECCIONA UN SERVICIO'}
@@ -240,19 +318,48 @@ export default function MedicionSave() {
             {servicio === 'Agua' ? 'm³' : servicio === 'Luz' ? 'kWh' : 'unidad'}
           </Text>
         </View>
+          </>
+        ) : null}
 
-        <Text style={[styles.label, styles.observationLabel]}>Observación</Text>
+        <Text style={[styles.label, styles.observationLabel]}>
+          Observación{!realizada ? ' *' : ''}
+        </Text>
         <TextInput accessibilityLabel="Observación de la medición" multiline onChangeText={(text) => {
-          setObservacion(text);
-          setSaved(false);
-        }}
-
-          placeholder="Agrega un detalle (opcional)"
-          placeholderTextColor="#8a918d"
-          style={styles.observationInput}
-          textAlignVertical="top"
+          setObservacion(text);  setSaved(false);    }}  placeholder="Agrega un detalle (opcional)"
+          placeholderTextColor="#8a918d"   style={styles.observationInput}    textAlignVertical="top"
           value={observation}
         />
+
+        <Text style={[styles.label, styles.photoLabel]}>Foto del medidor</Text>
+        <View style={styles.photoActions}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={seleccionarFoto}
+            style={({ pressed }) => [styles.photoButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.photoButtonText}>Elegir de galería</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={abrirCamara}
+            style={({ pressed }) => [styles.photoButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.photoButtonText}>Tomar foto</Text>
+          </Pressable>
+        </View>
+        {fotoUri ? (
+          <View style={styles.photoPreview}>
+            <Image source={{ uri: fotoUri }} style={styles.photoImage} resizeMode="cover" />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Eliminar foto"
+              onPress={() => setFotoUri(null)}
+              style={styles.removePhotoButton}
+            >
+              <Text style={styles.removePhotoText}>×</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
         {saved ? (
@@ -264,7 +371,7 @@ export default function MedicionSave() {
           </View>
         ) : null}
 
-        <Pressable accessibilityRole="button" onPress={guardarMedicion} style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+        <Pressable accessibilityLabel="Guardar medición" accessibilityRole="button" onPress={guardarMedicion} style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
         >
           <Text style={styles.saveButtonText}>Guardar medición</Text>
           <Text style={styles.saveArrow}>→</Text>
@@ -298,6 +405,27 @@ export default function MedicionSave() {
         )}
       </View>
     </ScrollView>
+
+    <Modal
+      animationType="slide"
+      onRequestClose={() => setCameraVisible(false)}
+      transparent={false}
+      visible={cameraVisible}
+    >
+      <View style={styles.cameraContainer}>
+        <CameraView ref={cameraRef} style={styles.camera} facing="back" />
+        <View style={styles.cameraControls}>
+          <Pressable accessibilityRole="button"  onPress={() => setCameraVisible(false)}
+            style={styles.cameraCancelButton}        >
+            <Text style={styles.cameraCancelText}>Cancelar</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button"  onPress={tomarFoto}     style={styles.captureButton}        >
+            <View style={styles.captureButtonInner} />
+          </Pressable>
+          <View style={styles.cameraControlSpacer} />
+        </View>
+      </View>
+    </Modal>
   </KeyboardAvoidingView>
   );
 }
@@ -451,6 +579,45 @@ const styles = StyleSheet.create({
     color: '#155c45',
     fontWeight: '800',
   },
+  statusLabel: {
+    marginTop: 22,
+  },
+  statusOption: {
+    minHeight: 48,
+    marginTop: 8,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#d8ddd5',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#8d978f',
+    borderRadius: 5,
+  },
+  checkboxSelected: {
+    borderColor: '#155c45',
+    backgroundColor: '#155c45',
+  },
+  checkboxMark: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  statusText: {
+    flex: 1,
+    color: '#244238',
+    fontSize: 13,
+    fontWeight: '600',
+  },
   previousLabel: {
     marginTop: 22,
   },
@@ -528,6 +695,95 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     color: '#17392f',
     fontSize: 14,
+  },
+  photoLabel: {
+    marginTop: 20,
+  },
+  photoActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  photoButton: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#155c45',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+  },
+  photoButtonText: {
+    color: '#155c45',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  photoPreview: {
+    height: 220,
+    marginTop: 12,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#dfe4dd',
+  },
+  photoImage: {
+    width: '100%',
+    height: '100%',
+  },
+  removePhotoButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+    backgroundColor: '#17392f',
+  },
+  removePhotoText: {
+    color: '#fff',
+    fontSize: 22,
+    lineHeight: 24,
+  },
+  cameraContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  camera: {
+    flex: 1,
+  },
+  cameraControls: {
+    height: 110,
+    paddingHorizontal: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#000',
+  },
+  cameraCancelButton: {
+    width: 70,
+  },
+  cameraCancelText: {
+    color: '#fff',
+    fontSize: 15,
+  },
+  cameraControlSpacer: {
+    width: 70,
+  },
+  captureButton: {
+    width: 72,
+    height: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#fff',
+    borderRadius: 36,
+  },
+  captureButtonInner: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#fff',
   },
   errorText: {
     marginTop: 11,
